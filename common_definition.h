@@ -16,6 +16,7 @@
 //#define TAIL_ANGLE_LOOK_UP     60  /* ルックアップ時の角度[度] */
 //#define TAIL_ANGLE_WAKE_UP     95  /* ルックアップ後復帰時の角度[度] */
 
+#include <math.h>
 #include <stdlib.h>
 //#include "kernel.h"
 //#include "kernel_id.h"
@@ -25,7 +26,5 @@
 #include "ev3api.h"
 extern const motor_port_t left_motor, right_motor, tail_motor;
 
-enum right_or_left {right,left};
-enum yes_or_no {yes,no};
-
 #endif
+

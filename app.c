@@ -7,6 +7,9 @@
  *2015/05/26
  *自己位置推定を書き加えてみる
  *self_localization.h
+ *self_localization.c
+ *を追加、pid走行をしながら現在座標を計算しつつ、
+ *目標座標に着いたら(通り過ぎたら)停止するようにしてみる(予定)
   */
 
 /**
@@ -23,9 +26,8 @@
 #include "app.h"
 #include "balancer.h"
 
-#include ""
-//修正したよ!
-
+#include "pid.h"
+#include "self_localization.h"
 
 #if defined(BUILD_MODULE)
 #include "module_cfg.h"
@@ -62,6 +64,8 @@ static FILE     *bt = NULL;     /* Bluetoothファイルハンドル */
 
 /* 下記のマクロは個体/環境に合わせて変更する必要があります */
 /* sample_c1マクロ */
+#define LIGHT_WHITE 27 //白色の光センサ値
+#define LIGHT_BLACK 2 //黒色の光センサ値
 #define GYRO_OFFSET  0          /* ジャイロセンサオフセット値(角速度0[deg/sec]時) */
 /* sample_c2マクロ */
 #define SONAR_ALERT_DISTANCE 30 /* 超音波センサによる障害物検知距離[cm] */
@@ -133,10 +137,13 @@ void get_white(void) {
   ev3_lcd_draw_string(str, 0, 30);
 }
 
+extern void test_ev3_motor_rotate();
+
+
+
 
 /* メインタスク */
-void main_task(intptr_t unused)
-{
+void main_task(intptr_t unused) {
     signed char forward;      /* 前後進命令 */
     signed char turn;         /* 旋回命令 */
     signed char pwm_L, pwm_R; /* 左右モータPWM出力 */
@@ -174,6 +181,8 @@ void main_task(intptr_t unused)
       if(ev3_button_is_pressed(ENTER_BUTTON)) sing_charumera();
       if(ev3_button_is_pressed(UP_BUTTON)) get_white();
       if(ev3_button_is_pressed(DOWN_BUTTON)) get_black();
+      if(ev3_button_is_pressed(RIGHT_BUTTON)) data_file();
+
       tslp_tsk(10); /* 10msecウェイト */
     }
 
@@ -188,10 +197,11 @@ void main_task(intptr_t unused)
     ev3_led_set_color(LED_GREEN); /* スタート通知 */
 
 
-
-
     //PID用構造体 ライトの値に使う
-    pid *my_pid = pid_make(50, 0.05, 0.02);
+    pid* my_pid = pid_make(2.0, 0.01, 0.01, (LIGHT_WHITE + LIGHT_BLACK)/2);
+
+    //自己位置推定
+    self_localization* my_sl = self_localization_constructor();
 
     /**
     * Main loop for the self-balance control algorithm
@@ -208,17 +218,23 @@ void main_task(intptr_t unused)
         forward = turn = 0; //障害物を検知したら停止
       }
       else {
-        forward = 30; //前進命令
-	/*サンプルコードでは
-	 *単純なON/OFF制御による旋回量決定
-        if (ev3_color_sensor_get_reflect(color_sensor) >= (LIGHT_WHITE + LIGHT_BLACK)/2) {
-          turn =  20; // 左旋回命令
-        }
-        else {
-          turn = -20; // 右旋回命令
-        }
-	*/
+	forward = 15; //前進命令
+        /* if (ev3_color_sensor_get_reflect(color_sensor) >= (LIGHT_WHITE + LIGHT_BLACK)/2) { */
+        /*   turn =  20; // 左旋回命令 */
+        /* } */
+        /* else { */
+        /*   turn = -20; // 右旋回命令 */
+        /* } */
+	pid_input(my_pid, ev3_color_sensor_get_reflect(color_sensor));
+	turn = (signed char)pid_get_output(*my_pid);
 
+	self_localization_update(my_sl);
+	self_localization_display_coodinates(my_sl);
+	if( self_localization_in_circle_of(0, 10.0, 3.0)) {
+	  forward = 0;
+	  //tail_control(TAIL_ANGLE_STAND_UP); /* 完全停止用角度に制御 */
+	  break;
+	}
       }
 
       /* 倒立振子制御API に渡すパラメータを取得する */
