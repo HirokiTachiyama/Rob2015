@@ -35,8 +35,9 @@ self_localization *self_localization_make(void) {
   new_self_localization->left_motor_old_angle  = 0;
   new_self_localization->right_motor_rotation_angle = 0;
   new_self_localization->left_motor_rotation_angle = 0;
-  new_self_localization->wheel_across = 8.1;
-  new_self_localization->between_wheels = 15.5;
+  new_self_localization->wheel_across = 8.0;
+  //  new_self_localization->between_wheels = 15.9;
+  new_self_localization->between_wheels = 16.1;
   new_self_localization->moving_distance = 0;
   new_self_localization->turning_angle = 0;
   new_self_localization->right_wheel_moving_distance = 0;
@@ -87,16 +88,23 @@ void self_localization_update(self_localization *sl){
   sl->current_angle = sl->old_angle + sl->turning_angle;
 }
 
-//When ev3 is in the circle which the center is(x, y) and the diameter is 2 * radius, return 1.
-//And the others, return 0.
-int self_localization_in_circle_of(float x, float y, float radius){
-  if( ((sl->current_x*sl->current_x) + (sl->current_y* sl->current_y)) < (x*x + y*y - radius*radius) )
-    return 1;
-  else
+int self_localization_near_target_coordinates(float target_x, float target_y, float target_radius,
+					 float ev3_radius, self_localization* sl){
+  float distance_between_two_points =
+    sqrt( pow((target_x - sl->current_x), 2) + pow((target_y - sl->current_y), 2));
+  float total_of_two_radius = target_radius + ev3_radius;
+
+  char s[50];
+  //sprintf(s, "dbtp:%f, totr:%f", distance_between_two_points, total_of_two_radius);
+  //ev3_lcd_draw_string(s, 0, 60);
+
+  if(distance_between_two_points > total_of_two_radius)
     return 0;
+  else
+    return 1;
 }
 
-void self_localization_display_coodinates(self_localization* sl){
+void self_localization_display_coordinates(self_localization* sl){
   char str[40];
   sprintf(str, "X:%f Y:%f", sl->current_x, sl->current_y);
   ev3_lcd_draw_string(str, 0, 50);
@@ -113,17 +121,10 @@ void self_localization_display_coodinates(self_localization* sl){
   }
 */
 
-void data_file(void) {
-  FILE *fp;
-  char s[256];
-  if ((fp = fopen("coordinates.txt", "w")) == NULL) {
-    ev3_lcd_draw_string("file open error", 0, 30);
-  }
+void self_localization_writing_current_coordinates(FILE* fp, self_localization* sl) {
 
-  fprintf(fp, "abcde%d\n", 100);
+  fprintf(fp, "%f %f\n", sl->current_x, sl->current_y);
 
-  fclose(fp);
   return;
 }
-
 

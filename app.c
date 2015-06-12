@@ -64,9 +64,10 @@ static FILE     *bt = NULL;     /* Bluetoothファイルハンドル */
 
 /* 下記のマクロは個体/環境に合わせて変更する必要があります */
 /* sample_c1マクロ */
-#define LIGHT_WHITE 27 //白色の光センサ値
-#define LIGHT_BLACK 2 //黒色の光センサ値
-#define GYRO_OFFSET  0          /* ジャイロセンサオフセット値(角速度0[deg/sec]時) */
+#define LIGHT_WHITE 35 //白色の光センサ値
+#define LIGHT_BLACK 1  //黒色の光センサ値
+#define GYRO_OFFSET 0          /* ジャイロセンサオフセット値(角速度0[deg/sec]時) */
+
 /* sample_c2マクロ */
 #define SONAR_ALERT_DISTANCE 30 /* 超音波センサによる障害物検知距離[cm] */
 /* sample_c3マクロ */
@@ -137,9 +138,17 @@ void get_white(void) {
   ev3_lcd_draw_string(str, 0, 30);
 }
 
+void get_gyrooffset(void) {
+  uint8_t gyro_offset_t = ev3_gyro_sensor_get_rate(GYRO_SENSOR);
+  int gyro_offset = (int) gyro_offset_t;
+  char str[10];
+  sprintf(str, "gyro offset:%d", gyro_offset);
+  ev3_lcd_draw_string(str, 0, 20);
+}
+
+
+
 extern void test_ev3_motor_rotate();
-
-
 
 
 /* メインタスク */
@@ -181,7 +190,8 @@ void main_task(intptr_t unused) {
       if(ev3_button_is_pressed(ENTER_BUTTON)) sing_charumera();
       if(ev3_button_is_pressed(UP_BUTTON)) get_white();
       if(ev3_button_is_pressed(DOWN_BUTTON)) get_black();
-      if(ev3_button_is_pressed(RIGHT_BUTTON)) data_file();
+      if(ev3_button_is_pressed(LEFT_BUTTON)) get_gyrooffset();
+      //      if(ev3_button_is_pressed(RIGHT_BUTTON))
 
       tslp_tsk(10); /* 10msecウェイト */
     }
@@ -198,27 +208,36 @@ void main_task(intptr_t unused) {
 
 
     //PID用構造体 ライトの値に使う
-    pid* my_pid = pid_make(2.0, 0.01, 0.01, (LIGHT_WHITE + LIGHT_BLACK)/2);
-
+    pid* my_pid = pid_make(2.0, 0.1, 0.02, (LIGHT_WHITE + LIGHT_BLACK)/2);
+    static unsigned int point1_passed = 0, point2_passed = 0, counter=0;
     //自己位置推定
     self_localization* my_sl = self_localization_constructor();
+
+    //coordinates data for map making.
+    FILE* map_fp = fopen("map_coordinates.txt", "w");
+    if(map_fp == NULL)
+      ev3_lcd_draw_string("file open failured!", 0, 70);
 
     /**
     * Main loop for the self-balance control algorithm
     */
     while(1) {
       int32_t motor_ang_l, motor_ang_r;
-      int gyro, volt;
+      int  gyro, volt;
 
       if (ev3_button_is_pressed(BACK_BUTTON)) break; //BACKボタンで停止
-      tail_control(TAIL_ANGLE_DRIVE); /* バランス走行用角度に制御 */
+
+      if (point1_passed == 0)
+	tail_control(TAIL_ANGLE_DRIVE); /* バランス走行用角度に制御 */
+      else
+	tail_control(TAIL_ANGLE_STAND_UP);
 
       /*障害物検知*/
       if (sonar_alert() == 1) {
         forward = turn = 0; //障害物を検知したら停止
       }
       else {
-	forward = 15; //前進命令
+	forward = 35; //前進命令
         /* if (ev3_color_sensor_get_reflect(color_sensor) >= (LIGHT_WHITE + LIGHT_BLACK)/2) { */
         /*   turn =  20; // 左旋回命令 */
         /* } */
@@ -228,56 +247,115 @@ void main_task(intptr_t unused) {
 	pid_input(my_pid, ev3_color_sensor_get_reflect(color_sensor));
 	turn = (signed char)pid_get_output(*my_pid);
 
+	if(turn >= 100)
+	  turn = 100;
+	else if(turn <= -100)
+	  turn = -100;
+
 	self_localization_update(my_sl);
-	self_localization_display_coodinates(my_sl);
-	if( self_localization_in_circle_of(0, 10.0, 3.0)) {
-	  forward = 0;
-	  //tail_control(TAIL_ANGLE_STAND_UP); /* 完全停止用角度に制御 */
-	  break;
+	self_localization_display_coordinates(my_sl);
+
+	//現在座標をファイルに書き込む
+	self_localization_writing_current_coordinates(map_fp, my_sl);
+
+	if(self_localization_near_target_coordinates(-45.0, -60.0, 10.0, 10.0, my_sl) == 1) {
+	  point1_passed = 1;
+	  //sing_charumera();
+	  ev3_speaker_play_tone(NOTE_C4, 150);
+	  //tail_control(TAIL_ANGLE_STAND_UP);
 	}
+
+	if(self_localization_near_target_coordinates(60.0, -80.0, 5.0, 10.0, my_sl)==1 && point1_passed == 1){
+	  point2_passed = 1;
+	  ev3_speaker_play_tone(NOTE_D4, 150);
+	}
+
+	if(point1_passed==1 && point2_passed==1){
+	  counter++;
+	}
+
+	if(counter !=0 && counter < 2000) {
+	  forward = 10;
+	  turn = 0;
+	}
+	  /* while(1){ */
+	  /*   tail_control(TAIL_ANGLE_STAND_UP); // 完全停止用角度に制御 */
+	  /*   sing_charumera(); */
+	  /*   forward = 0; */
+	  /* } */
+
+
+	/* 座標とそれぞれの半径を指定、近づいたら止める
+	   if( self_localization_near_target_coordinates(0.0, 0.0, 30.0, 30.0, my_sl) ) {
+	   if (hoge > 5000)
+	   while(1){
+	   tail_control(TAIL_ANGLE_STAND_UP); // 完全停止用角度に制御
+	   forward = 0;
+	   }
+	   else {
+	   hoge++;
+	   sprintf(hogestr, "%d", hoge);
+	   ev3_lcd_draw_string(hogestr, 0, 40);
+	   }
+	   }
+	*/
+
+	/* 倒立振子制御API に渡すパラメータを取得する */
+	motor_ang_l = ev3_motor_get_counts(left_motor);
+	motor_ang_r = ev3_motor_get_counts(right_motor);
+	gyro = -1 * ev3_gyro_sensor_get_rate(gyro_sensor); /* ※ジャイロセンサーの向きが逆のため符号反転 */
+	volt = ev3_battery_voltage_mV();
+
+	/* 倒立振子制御APIを呼び出し、倒立走行するための */
+	/* 左右モータ出力値を得る */
+	if(counter <= 2000){
+	  balance_control(
+			  (float)forward,
+			  (float)turn,
+			  (float)gyro,
+			  (float)GYRO_OFFSET,
+			  (float)motor_ang_l,
+			  (float)motor_ang_r,
+			  (float)volt,
+			  (signed char*)&pwm_L,
+			  (signed char*)&pwm_R);
+	}
+	else if(counter > 2000 && counter <=6250){
+	  pwm_L = 23 - (counter*4/1000);
+	  pwm_R = 23 - (counter*4/1000);
+	}
+	
+	else if(counter > 6250 && counter <= 7000){
+	  pwm_L = pwm_R = 0;
+	}
+	
+	
+	/* EV3ではモーター停止時のブレーキ設定が事前にできないため */
+	/* 出力0時に、その都度設定する */
+	if (pwm_L == 0)
+	  {
+	    ev3_motor_stop(left_motor, true);
+	  }
+	else
+	  {
+	    ev3_motor_set_power(left_motor, (int)pwm_L);
+	  }
+	
+	if (pwm_R == 0)
+	  {
+	    ev3_motor_stop(right_motor, true);
+	  }
+	else
+	  {
+	    ev3_motor_set_power(right_motor, (int)pwm_R);
+	  }
+	
+	tslp_tsk(4); /* 4msec周期起動 */
       }
-
-      /* 倒立振子制御API に渡すパラメータを取得する */
-      motor_ang_l = ev3_motor_get_counts(left_motor);
-      motor_ang_r = ev3_motor_get_counts(right_motor);
-      gyro = -1 * ev3_gyro_sensor_get_rate(gyro_sensor); /* ※ジャイロセンサーの向きが逆のため符号反転 */
-      volt = ev3_battery_voltage_mV();
-
-      /* 倒立振子制御APIを呼び出し、倒立走行するための */
-      /* 左右モータ出力値を得る */
-      balance_control(
-		      (float)forward,
-		      (float)turn,
-		      (float)gyro,
-		      (float)GYRO_OFFSET,
-		      (float)motor_ang_l,
-		      (float)motor_ang_r,
-		      (float)volt,
-		      (signed char*)&pwm_L,
-		      (signed char*)&pwm_R);
-
-      /* EV3ではモーター停止時のブレーキ設定が事前にできないため */
-      /* 出力0時に、その都度設定する */
-      if (pwm_L == 0)
-        {
-	  ev3_motor_stop(left_motor, true);
-        }
-      else
-        {
-	  ev3_motor_set_power(left_motor, (int)pwm_L);
-        }
-
-      if (pwm_R == 0)
-        {
-	  ev3_motor_stop(right_motor, true);
-        }
-      else
-        {
-	  ev3_motor_set_power(right_motor, (int)pwm_R);
-        }
-
-      tslp_tsk(4); /* 4msec周期起動 */
     }
+
+    fclose(map_fp);
+
     ev3_motor_stop(left_motor, false);
     ev3_motor_stop(right_motor, false);
 
@@ -295,31 +373,31 @@ void main_task(intptr_t unused) {
 //*****************************************************************************
 static int sonar_alert(void)
 {
-    static unsigned int counter = 0;
-    static int alert = 0;
+  static unsigned int counter = 0;
+  static int alert = 0;
 
-    signed int distance;
+  signed int distance;
 
-    if (++counter == 40/4) /* 約40msec周期毎に障害物検知  */
+  if (++counter == 40/4) /* 約40msec周期毎に障害物検知  */
     {
-        /*
-         * 超音波センサによる距離測定周期は、超音波の減衰特性に依存します。
-         * NXTの場合は、40msec周期程度が経験上の最短測定周期です。
-         * EV3の場合は、要確認
-         */
-        distance = ev3_ultrasonic_sensor_get_distance(sonar_sensor);
-        if ((distance <= SONAR_ALERT_DISTANCE) && (distance >= 0))
+      /*
+       * 超音波センサによる距離測定周期は、超音波の減衰特性に依存します。
+       * NXTの場合は、40msec周期程度が経験上の最短測定周期です。
+       * EV3の場合は、要確認
+       */
+      distance = ev3_ultrasonic_sensor_get_distance(sonar_sensor);
+      if ((distance <= SONAR_ALERT_DISTANCE) && (distance >= 0))
         {
-            alert = 1; /* 障害物を検知 */
+	  alert = 1; /* 障害物を検知 */
         }
-        else
+      else
         {
-            alert = 0; /* 障害物無し */
+	  alert = 0; /* 障害物無し */
         }
-        counter = 0;
+      counter = 0;
     }
 
-    return alert;
+  return alert;
 }
 
 //*****************************************************************************
@@ -330,24 +408,24 @@ static int sonar_alert(void)
 //*****************************************************************************
 static void tail_control(signed int angle)
 {
-    float pwm = (float)(angle - ev3_motor_get_counts(tail_motor))*P_GAIN; /* 比例制御 */
-    /* PWM出力飽和処理 */
-    if (pwm > PWM_ABS_MAX)
+  float pwm = (float)(angle - ev3_motor_get_counts(tail_motor))*P_GAIN; /* 比例制御 */
+  /* PWM出力飽和処理 */
+  if (pwm > PWM_ABS_MAX)
     {
-        pwm = PWM_ABS_MAX;
+      pwm = PWM_ABS_MAX;
     }
-    else if (pwm < -PWM_ABS_MAX)
+  else if (pwm < -PWM_ABS_MAX)
     {
-        pwm = -PWM_ABS_MAX;
+      pwm = -PWM_ABS_MAX;
     }
 
-    if (pwm == 0)
+  if (pwm == 0)
     {
-        ev3_motor_stop(tail_motor, true);
+      ev3_motor_stop(tail_motor, true);
     }
-    else
+  else
     {
-        ev3_motor_set_power(tail_motor, (signed char)pwm);
+      ev3_motor_set_power(tail_motor, (signed char)pwm);
     }
 }
 
@@ -360,17 +438,17 @@ static void tail_control(signed int angle)
 //*****************************************************************************
 void bt_task(intptr_t unused)
 {
-    while(1)
+  while(1)
     {
-        uint8_t c = fgetc(bt); /* 受信 */
-        switch(c)
+      uint8_t c = fgetc(bt); /* 受信 */
+      switch(c)
         {
         case '1':
-            bt_cmd = 1;
-            break;
+	  bt_cmd = 1;
+	  break;
         default:
-            break;
+	  break;
         }
-        fputc(c, bt); /* エコーバック */
+      fputc(c, bt); /* エコーバック */
     }
 }

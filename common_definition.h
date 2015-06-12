@@ -26,5 +26,8 @@
 #include "ev3api.h"
 extern const motor_port_t left_motor, right_motor, tail_motor;
 
+enum right_or_left {right, left};
+enum yes_or_nio {yes, no};
+
 #endif
 
